@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>圆环径向分隔 · Ring Divider</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  :root{
+    --bg:#0c1422; --panel:#13203a; --line:#223358;
+    --ink:#e7eefb; --muted:#8ba0c4;
+    --ring:#2f6df0; --ring2:#1846b8;
+    --sep:#f2a23c; --guide:#3a4f7a;
+  }
+  body{
+    min-height:100vh; background:radial-gradient(circle at 50% 38%, #14213c 0%, #0c1422 70%);
+    color:var(--ink); font-family:'PingFang SC','Microsoft YaHei',Arial,sans-serif;
+    display:flex; flex-direction:column; align-items:center; padding:40px 20px 64px;
+  }
+  h1{ font-size:18px; font-weight:600; letter-spacing:.01em; }
+  .sub{ font-size:13px; color:var(--muted); margin-top:4px; }
+  .stage{ margin:28px 0 8px; }
+  .caption{ font-size:13px; color:var(--muted); font-family:ui-monospace,'SF Mono',Menlo,monospace; }
+  .caption b{ color:var(--sep); font-weight:600; }
+  .panel{
+    margin-top:28px; background:var(--panel); border:1px solid var(--line);
+    border-radius:14px; padding:20px 24px; display:grid;
+    grid-template-columns:repeat(2,minmax(220px,1fr)); gap:18px 36px; width:min(640px,92vw);
+  }
+  .ctrl{ display:flex; flex-direction:column; gap:8px; }
+  .ctrl label{ font-size:12px; color:var(--muted); display:flex; justify-content:space-between; }
+  .ctrl label b{ color:var(--ink); font-variant-numeric:tabular-nums; font-weight:600; }
+  input[type=range]{ width:100%; accent-color:var(--sep); }
+  .legend{ display:flex; gap:20px; margin-top:18px; font-size:12px; color:var(--muted); flex-wrap:wrap; justify-content:center; }
+  .legend span{ display:flex; align-items:center; gap:7px; }
+  .sw{ width:13px; height:13px; border-radius:3px; display:inline-block; }
+</style>
+</head>
+<body>
+  <h1>圆环径向分隔</h1>
+  <div class="sub">内半径 r0 · 外半径 r1 · 等比例 n 份 · 等腰三角形分隔（顶点位于中线圆 rm）</div>
+
+  <div class="stage"><svg id="art" width="440" height="440" viewBox="0 0 440 440"></svg></div>
+  <div class="caption" id="cap"></div>
+
+  <div class="legend">
+    <span><i class="sw" style="background:#2f6df0"></i>圆环段 + 分隔 tab（同色）</span>
+    <span><i class="sw" style="background:#0c1422;border:1px solid #3a4f7a"></i>透明间隙</span>
+    <span><i class="sw" style="background:#3a4f7a"></i>r0 / rm / r1 参考圆</span>
+  </div>
+
+  <div class="panel">
+    <div class="ctrl">
+      <label>份数 n <b id="vn">4</b></label>
+      <input type="range" id="n" min="2" max="16" step="1" value="4">
+    </div>
+    <div class="ctrl">
+      <label>分隔顶角 (°) <b id="va">120</b></label>
+      <input type="range" id="a" min="20" max="170" step="1" value="120">
+    </div>
+    <div class="ctrl">
+      <label>内半径 r0 <b id="vr0">80</b></label>
+      <input type="range" id="r0" min="20" max="150" step="1" value="80">
+    </div>
+    <div class="ctrl">
+      <label>外半径 r1 <b id="vr1">150</b></label>
+      <input type="range" id="r1" min="60" max="200" step="1" value="150">
+    <div class="ctrl">
+      <label>外延 offset (px) <b id="vo">5</b></label>
+      <input type="range" id="o" min="0" max="20" step="1" value="5">
+    </div>
+    <div class="ctrl">
+      <label>整体旋转 (°) <b id="vrot">0</b></label>
+      <input type="range" id="rot" min="0" max="360" step="1" value="0">
+    </div>
+    <div class="ctrl">
+      <label>三角形顺时针 <b id="vcw">否</b></label>
+      <input type="checkbox" id="cw" style="width:auto;align-self:flex-start;transform:scale(1.3);accent-color:var(--sep)">
+    </div>
+  </div>
+
+<script>
+const SVGNS='http://www.w3.org/2000/svg';
+const cx=220, cy=220;
+
+const $=id=>document.getElementById(id);
+
+function polar(r,a){ return [cx + r*Math.cos(a), cy + r*Math.sin(a)]; }
+function f(n){ return n.toFixed(2); }
+
+// apex angle (deg) at C for canonical divider at boundary angle 0:
+//   A=(r0,0) on inner, B=(r1,0) on outer, C=(rm, φ) on midline (tangential offset φ)
+function apexAngleDeg(phi, r0, r1, rm){
+  const A=[r0,0], B=[r1,0], C=[rm*Math.cos(phi), rm*Math.sin(phi)];
+  const CA=[A[0]-C[0], A[1]-C[1]];
+  const CB=[B[0]-C[0], B[1]-C[1]];
+  const dot=CA[0]*CB[0]+CA[1]*CB[1];
+  const mag=Math.hypot(...CA)*Math.hypot(...CB);
+  return Math.acos(Math.max(-1,Math.min(1,dot/mag)))*180/Math.PI;
+}
+// invert: find φ giving the requested apex angle (apex angle decreases as φ grows)
+function solvePhi(targetDeg, r0, r1, rm){
+  let lo=1e-4, hi=Math.PI*0.95;
+  for(let i=0;i<60;i++){
+    const mid=(lo+hi)/2;
+    (apexAngleDeg(mid,r0,r1,rm) > targetDeg) ? (lo=mid) : (hi=mid);
+  }
+  return (lo+hi)/2;
+}
+
+function ringPath(r0,r1){
+  // annulus via even-odd: outer CW, inner CW
+  return `M ${cx-r1} ${cy} A ${r1} ${r1} 0 1 0 ${cx+r1} ${cy} A ${r1} ${r1} 0 1 0 ${cx-r1} ${cy} Z`
+       + `M ${cx-r0} ${cy} A ${r0} ${r0} 0 1 0 ${cx+r0} ${cy} A ${r0} ${r0} 0 1 0 ${cx-r0} ${cy} Z`;
+}
+
+// outward offset of a convex polygon by distance d (sides stay parallel)
+function offsetPolygon(pts, d){
+  const n=pts.length;
+  const gx=pts.reduce((s,p)=>s+p[0],0)/n, gy=pts.reduce((s,p)=>s+p[1],0)/n;
+  const lines=[];
+  for(let i=0;i<n;i++){
+    const p=pts[i], q=pts[(i+1)%n];
+    let dx=q[0]-p[0], dy=q[1]-p[1];
+    const len=Math.hypot(dx,dy)||1; dx/=len; dy/=len;
+    let nx=-dy, ny=dx;                                   // edge normal
+    const mx=(p[0]+q[0])/2, my=(p[1]+q[1])/2;
+    if(nx*(mx-gx)+ny*(my-gy)<0){ nx=-nx; ny=-ny; }       // force outward
+    lines.push({x:p[0]+nx*d, y:p[1]+ny*d, dx, dy});
+  }
+  const res=[];
+  for(let i=0;i<n;i++){
+    const L1=lines[(i-1+n)%n], L2=lines[i];
+    const det=L1.dx*(-L2.dy)-L1.dy*(-L2.dx) || 1e-6;
+    const rx=L2.x-L1.x, ry=L2.y-L1.y;
+    const t=(rx*(-L2.dy)-ry*(-L2.dx))/det;
+    res.push([L1.x+t*L1.dx, L1.y+t*L1.dy]);
+  }
+  return res;
+}
+const triPath=p=>`M ${f(p[0][0])} ${f(p[0][1])} L ${f(p[1][0])} ${f(p[1][1])} L ${f(p[2][0])} ${f(p[2][1])} Z`;
+
+// arc path at radius r for a segment centered at angle ac (rad), spanning ±half.
+// Lower-half segments are reversed so the text stays upright.
+function segTextPath(ac, half, r){
+  const lower = Math.sin(ac) > 0;
+  let a0=ac-half, a1=ac+half, sweep=1;
+  if(lower){ const t=a0; a0=a1; a1=t; sweep=0; }
+  const P0=polar(r,a0), P1=polar(r,a1);
+  return `M ${f(P0[0])} ${f(P0[1])} A ${r} ${r} 0 0 ${sweep} ${f(P1[0])} ${f(P1[1])}`;
+}
+const SEG_LABELS=['营收','成本','利润','现金流','负债','权益','税务','投资'];
+
+// intersection of two lines given as {x,y,dx,dy}
+function lineIntersect(L1,L2){
+  const det=L1.dx*(-L2.dy)-L1.dy*(-L2.dx) || 1e-6;
+  const rx=L2.x-L1.x, ry=L2.y-L1.y;
+  const t=(rx*(-L2.dy)-ry*(-L2.dx))/det;
+  return [L1.x+t*L1.dx, L1.y+t*L1.dy];
+}
+// outer triangle: base edge stays on the SAME line as [A,B]; only the two
+// apex sides (C->A, C->B) are pushed outward by d (kept parallel).
+function outerTriangle(A,B,C,d){
+  const g=[(A[0]+B[0]+C[0])/3,(A[1]+B[1]+C[1])/3];
+  const line=(P,Q,off)=>{
+    let dx=Q[0]-P[0], dy=Q[1]-P[1];
+    const len=Math.hypot(dx,dy)||1; dx/=len; dy/=len;
+    let nx=-dy, ny=dx;
+    const mx=(P[0]+Q[0])/2, my=(P[1]+Q[1])/2;
+    if(nx*(mx-g[0])+ny*(my-g[1])<0){ nx=-nx; ny=-ny; }   // outward
+    return {x:P[0]+nx*off, y:P[1]+ny*off, dx, dy};
+  };
+  const base =line(A,B,0);      // unchanged: same line as original base
+  const slA  =line(C,A,d);      // apex side toward A, pushed out
+  const slB  =line(C,B,d);      // apex side toward B, pushed out
+  return [ lineIntersect(base,slA), lineIntersect(base,slB), lineIntersect(slA,slB) ];
+}
+function circle(r,extra){
+  const c=document.createElementNS(SVGNS,'circle');
+  c.setAttribute('cx',cx); c.setAttribute('cy',cy); c.setAttribute('r',r);
+  c.setAttribute('fill','none');
+  for(const k in extra) c.setAttribute(k,extra[k]);
+  return c;
+}
+function el(tag,attrs){
+  const e=document.createElementNS(SVGNS,tag);
+  for(const k in attrs) e.setAttribute(k,attrs[k]);
+  return e;
+}
+
+function render(){
+  const n=+$('n').value, apex=+$('a').value, off=+$('o').value;
+  const rotDeg=+$('rot').value, cw=$('cw').checked;
+  let r0=+$('r0').value, r1=+$('r1').value;
+  if(r1<=r0+10){ r1=r0+10; }            // keep a usable band
+  const rm=(r0+r1)/2;
+  const phi=solvePhi(apex, r0, r1, rm) * (cw ? -1 : 1);
+
+  $('vn').textContent=n; $('va').textContent=apex;
+  $('vr0').textContent=r0; $('vr1').textContent=r1; $('vo').textContent=off;
+  $('vrot').textContent=rotDeg; $('vcw').textContent=cw?'是':'否';
+  $('cap').innerHTML=`n = <b>${n}</b> &nbsp;·&nbsp; 顶角 = <b>${apex}°</b> &nbsp;·&nbsp; offset = ${off}px &nbsp;·&nbsp; 旋转 ${rotDeg}° &nbsp;·&nbsp; ${cw?'顺时针':'逆时针'}`;
+
+  const svg=$('art');
+  svg.innerHTML='';
+
+  const start=-Math.PI/2 + rotDeg*Math.PI/180, step=2*Math.PI/n;
+
+  // build, per divider: inner triangle (base corners pushed out `off`) + outer parallel triangle (offset `off`)
+  const inner=[], outer=[];
+  for(let i=0;i<n;i++){
+    const th=start+i*step;
+    const A=polar(r0-off, th);     // inner base vertex, extended outward
+    const B=polar(r1+off, th);     // outer base vertex, extended outward
+    const C=polar(rm, th+phi);     // apex on midline
+    const tri=[A,B,C];
+    inner.push(tri);
+    outer.push(outerTriangle(A,B,C, off));   // base stays collinear; only apex sides pushed out
+  }
+
+  // defs + mask: transparent band = outer triangle minus inner triangle
+  const defs=el('defs',{});
+  defs.innerHTML=`
+    <linearGradient id="ringGrad" gradientUnits="userSpaceOnUse" x1="0" y1="${(cy-r1).toFixed(1)}" x2="0" y2="${(cy+r1).toFixed(1)}">
+      <stop offset="0%" stop-color="#3f7bf5"/>
+      <stop offset="100%" stop-color="#1a46b0"/>
+    </linearGradient>
+    <mask id="sepMask" maskUnits="userSpaceOnUse" x="0" y="0" width="440" height="440">
+      <rect x="0" y="0" width="440" height="440" fill="white"/>
+      ${outer.map(p=>`<path d="${triPath(p)}" fill="black"/>`).join('')}
+      ${inner.map(p=>`<path d="${triPath(p)}" fill="white"/>`).join('')}
+    </mask>
+    <clipPath id="bandClip">
+      <path d="${ringPath(Math.max(1,r0-off), r1+off)}" clip-rule="evenodd"/>
+    </clipPath>`;
+  svg.appendChild(defs);
+
+  // guide circles (under, not masked)
+  svg.appendChild(circle(r0,{stroke:'#3a4f7a','stroke-width':1,'stroke-dasharray':'3 4'}));
+  svg.appendChild(circle(rm,{stroke:'#46608f','stroke-width':1,'stroke-dasharray':'1 5'}));
+  svg.appendChild(circle(r1,{stroke:'#3a4f7a','stroke-width':1,'stroke-dasharray':'3 4'}));
+
+  // masked + clipped group: ring + tabs one color; tabs terminate on concentric arcs
+  const g=el('g',{mask:'url(#sepMask)','clip-path':'url(#bandClip)'});
+  g.appendChild(el('path',{d:ringPath(r0,r1),'fill-rule':'evenodd',fill:'url(#ringGrad)'}));
+  inner.forEach(p=> g.appendChild(el('path',{d:triPath(p),fill:'url(#ringGrad)'})));
+  svg.appendChild(g);
+
+  // curved labels: centered along each segment's arc, radially centered on rm
+  const fs=Math.max(9, Math.min(15,(r1-r0)*0.34));
+  for(let i=0;i<n;i++){
+    const ac=start + i*step + step/2;
+    const id='segArc'+i;
+    svg.appendChild(el('path',{id, d:segTextPath(ac, step*0.40, rm), fill:'none', stroke:'none'}));
+    const t=el('text',{
+      'font-size':fs, 'font-weight':600, fill:'#eef5ff',
+      'font-family':"'PingFang SC','Microsoft YaHei',sans-serif", 'letter-spacing':'1'
+    });
+    t.innerHTML=`<textPath href="#${id}" startOffset="50%" text-anchor="middle" dominant-baseline="middle">${SEG_LABELS[i%SEG_LABELS.length]}</textPath>`;
+    svg.appendChild(t);
+  }
+}
+
+['n','a','r0','r1','o','rot'].forEach(id=> $(id).addEventListener('input',render));
+$('cw').addEventListener('change',render);
+render();
+</script>
+</body>
+</html>
