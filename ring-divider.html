@@ -66,8 +66,12 @@
       <label>外半径 r1 <b id="vr1">150</b></label>
       <input type="range" id="r1" min="60" max="200" step="1" value="150">
     <div class="ctrl">
-      <label>外延 offset (px) <b id="vo">5</b></label>
+      <label>segment 间隙 gap (px) <b id="vo">5</b></label>
       <input type="range" id="o" min="0" max="20" step="1" value="5">
+    </div>
+    <div class="ctrl">
+      <label>底边外延 baseOffset (px) <b id="vob">5</b></label>
+      <input type="range" id="ob" min="0" max="20" step="1" value="5">
     </div>
     <div class="ctrl">
       <label>整体旋转 (°) <b id="vrot">0</b></label>
@@ -76,6 +80,10 @@
     <div class="ctrl">
       <label>三角形顺时针 <b id="vcw">否</b></label>
       <input type="checkbox" id="cw" style="width:auto;align-self:flex-start;transform:scale(1.3);accent-color:var(--sep)">
+    </div>
+    <div class="ctrl">
+      <label>多色分段（colors） <b id="vmc">否</b></label>
+      <input type="checkbox" id="mc" style="width:auto;align-self:flex-start;transform:scale(1.3);accent-color:var(--sep)">
     </div>
   </div>
 
@@ -139,6 +147,13 @@ function offsetPolygon(pts, d){
   return res;
 }
 const triPath=p=>`M ${f(p[0][0])} ${f(p[0][1])} L ${f(p[1][0])} ${f(p[1][1])} L ${f(p[2][0])} ${f(p[2][1])} Z`;
+const arcSeg=(r,a0,a1)=>{const P=polar(r,a1);const large=Math.abs(a1-a0)>Math.PI?1:0;const sweep=a1>a0?1:0;return `A ${r} ${r} 0 ${large} ${sweep} ${f(P[0])} ${f(P[1])}`;};
+// per-segment palette + color helpers (mirrors the component)
+const PALETTE=['#2f6df0','#1f8a5b','#d97706','#7c3aed','#dc2626','#0e7490','#db2777','#65a30d'];
+function _h2r(h){h=h.replace('#','');if(h.length===3)h=h.split('').map(c=>c+c).join('');return[parseInt(h.slice(0,2),16),parseInt(h.slice(2,4),16),parseInt(h.slice(4,6),16)];}
+function _r2h(r,g,b){const x=v=>Math.max(0,Math.min(255,Math.round(v))).toString(16).padStart(2,'0');return'#'+x(r)+x(g)+x(b);}
+function _mix(h,t,a){const[r,g,b]=_h2r(h);return _r2h(r+(t[0]-r)*a,g+(t[1]-g)*a,b+(t[2]-b)*a);}
+const lighten=(h,a)=>_mix(h,[255,255,255],a), darken=(h,a)=>_mix(h,[6,18,46],a);
 
 // arc path at radius r for a segment centered at angle ac (rad), spanning ±half.
 // Lower-half segments are reversed so the text stays upright.
@@ -189,17 +204,17 @@ function el(tag,attrs){
 }
 
 function render(){
-  const n=+$('n').value, apex=+$('a').value, off=+$('o').value;
-  const rotDeg=+$('rot').value, cw=$('cw').checked;
+  const n=+$('n').value, apex=+$('a').value, off=+$('o').value, bo=+$('ob').value;
+  const rotDeg=+$('rot').value, cw=$('cw').checked, mc=$('mc').checked;
   let r0=+$('r0').value, r1=+$('r1').value;
   if(r1<=r0+10){ r1=r0+10; }            // keep a usable band
   const rm=(r0+r1)/2;
   const phi=solvePhi(apex, r0, r1, rm) * (cw ? -1 : 1);
 
   $('vn').textContent=n; $('va').textContent=apex;
-  $('vr0').textContent=r0; $('vr1').textContent=r1; $('vo').textContent=off;
-  $('vrot').textContent=rotDeg; $('vcw').textContent=cw?'是':'否';
-  $('cap').innerHTML=`n = <b>${n}</b> &nbsp;·&nbsp; 顶角 = <b>${apex}°</b> &nbsp;·&nbsp; offset = ${off}px &nbsp;·&nbsp; 旋转 ${rotDeg}° &nbsp;·&nbsp; ${cw?'顺时针':'逆时针'}`;
+  $('vr0').textContent=r0; $('vr1').textContent=r1; $('vo').textContent=off; $('vob').textContent=bo;
+  $('vrot').textContent=rotDeg; $('vcw').textContent=cw?'是':'否'; $('vmc').textContent=mc?'是':'否';
+  $('cap').innerHTML=`n = <b>${n}</b> &nbsp;·&nbsp; 顶角 = <b>${apex}°</b> &nbsp;·&nbsp; gap = ${off}px &nbsp;·&nbsp; baseOffset = ${bo}px &nbsp;·&nbsp; 旋转 ${rotDeg}° &nbsp;·&nbsp; ${cw?'顺时针':'逆时针'}`;
 
   const svg=$('art');
   svg.innerHTML='';
@@ -210,28 +225,51 @@ function render(){
   const inner=[], outer=[];
   for(let i=0;i<n;i++){
     const th=start+i*step;
-    const A=polar(r0-off, th);     // inner base vertex, extended outward
-    const B=polar(r1+off, th);     // outer base vertex, extended outward
+    const A=polar(r0-bo, th);      // inner base vertex, extended outward by baseOffset
+    const B=polar(r1+bo, th);      // outer base vertex, extended outward by baseOffset
     const C=polar(rm, th+phi);     // apex on midline
     const tri=[A,B,C];
     inner.push(tri);
-    outer.push(outerTriangle(A,B,C, off));   // base stays collinear; only apex sides pushed out
+    outer.push(outerTriangle(A,B,C, off));   // base collinear; apex sides pushed out by gap
   }
 
   // defs + mask: transparent band = outer triangle minus inner triangle
   const defs=el('defs',{});
-  defs.innerHTML=`
+  let gradDefs=`
     <linearGradient id="ringGrad" gradientUnits="userSpaceOnUse" x1="0" y1="${(cy-r1).toFixed(1)}" x2="0" y2="${(cy+r1).toFixed(1)}">
       <stop offset="0%" stop-color="#3f7bf5"/>
       <stop offset="100%" stop-color="#1a46b0"/>
-    </linearGradient>
+    </linearGradient>`;
+  if(mc){
+    for(let i=0;i<n;i++){
+      const col=PALETTE[i%PALETTE.length], t=lighten(col,0.18), b=darken(col,0.20);
+      gradDefs+=`<linearGradient id="segGrad${i}" gradientUnits="userSpaceOnUse" x1="0" y1="${(cy-r1).toFixed(1)}" x2="0" y2="${(cy+r1).toFixed(1)}"><stop offset="0%" stop-color="${t}"/><stop offset="100%" stop-color="${b}"/></linearGradient>`;
+    }
+  }
+
+  // per-segment clip regions (silhouette-hugging) — used only to assign color per angular slice
+  let regionClips='';
+  if(mc){
+    const rIn=Math.max(1,r0-bo), rOut=r1+bo;
+    for(let i=0;i<n;i++){
+      const th0=start+i*step, th1=start+(i+1)*step, jj=(i+1)%n;
+      const Ai=inner[i][0], Bi=inner[i][1], Ci=inner[i][2];
+      const Bj=inner[jj][1], Cj=inner[jj][2], Aj=inner[jj][0];
+      const d=`M ${f(Ai[0])} ${f(Ai[1])} L ${f(Ci[0])} ${f(Ci[1])} L ${f(Bi[0])} ${f(Bi[1])} `
+        +`${arcSeg(rOut,th0,th1)} L ${f(Cj[0])} ${f(Cj[1])} L ${f(Aj[0])} ${f(Aj[1])} ${arcSeg(rIn,th1,th0)} Z`;
+      regionClips+=`<clipPath id="regionClip${i}"><path d="${d}"/></clipPath>`;
+    }
+  }
+  defs.innerHTML=`
+    ${gradDefs}
+    ${regionClips}
     <mask id="sepMask" maskUnits="userSpaceOnUse" x="0" y="0" width="440" height="440">
       <rect x="0" y="0" width="440" height="440" fill="white"/>
       ${outer.map(p=>`<path d="${triPath(p)}" fill="black"/>`).join('')}
       ${inner.map(p=>`<path d="${triPath(p)}" fill="white"/>`).join('')}
     </mask>
     <clipPath id="bandClip">
-      <path d="${ringPath(Math.max(1,r0-off), r1+off)}" clip-rule="evenodd"/>
+      <path d="${ringPath(Math.max(1,r0-bo), r1+bo)}" clip-rule="evenodd"/>
     </clipPath>`;
   svg.appendChild(defs);
 
@@ -240,16 +278,27 @@ function render(){
   svg.appendChild(circle(rm,{stroke:'#46608f','stroke-width':1,'stroke-dasharray':'1 5'}));
   svg.appendChild(circle(r1,{stroke:'#3a4f7a','stroke-width':1,'stroke-dasharray':'3 4'}));
 
-  // masked + clipped group: ring + tabs one color; tabs terminate on concentric arcs
+  // masked + clipped group: ring + tabs; single gradient, or per-segment colored regions
   const g=el('g',{mask:'url(#sepMask)','clip-path':'url(#bandClip)'});
-  g.appendChild(el('path',{d:ringPath(r0,r1),'fill-rule':'evenodd',fill:'url(#ringGrad)'}));
-  inner.forEach(p=> g.appendChild(el('path',{d:triPath(p),fill:'url(#ringGrad)'})));
+  if(mc){
+    // each segment: real annulus (r0..r1) + tabs, in segment color, clipped to its silhouette region.
+    // baseOffset only lengthens the tab feet (via inner[] radii), never thickens the ring body.
+    for(let i=0;i<n;i++){
+      const gi=el('g',{'clip-path':`url(#regionClip${i})`});
+      gi.appendChild(el('path',{d:ringPath(r0,r1),'fill-rule':'evenodd',fill:`url(#segGrad${i})`}));
+      inner.forEach(p=> gi.appendChild(el('path',{d:triPath(p),fill:`url(#segGrad${i})`})));
+      g.appendChild(gi);
+    }
+  } else {
+    g.appendChild(el('path',{d:ringPath(r0,r1),'fill-rule':'evenodd',fill:'url(#ringGrad)'}));
+    inner.forEach(p=> g.appendChild(el('path',{d:triPath(p),fill:'url(#ringGrad)'})));
+  }
   svg.appendChild(g);
 
   // curved labels: centered along each segment's arc, radially centered on rm
   const fs=Math.max(9, Math.min(15,(r1-r0)*0.34));
   for(let i=0;i<n;i++){
-    const ac=start + i*step + step/2;
+    const ac=start + i*step + step/2 + phi;   // midpoint between the two apexes (both leaned by phi)
     const id='segArc'+i;
     svg.appendChild(el('path',{id, d:segTextPath(ac, step*0.40, rm), fill:'none', stroke:'none'}));
     const t=el('text',{
@@ -261,8 +310,9 @@ function render(){
   }
 }
 
-['n','a','r0','r1','o','rot'].forEach(id=> $(id).addEventListener('input',render));
+['n','a','r0','r1','o','ob','rot'].forEach(id=> $(id).addEventListener('input',render));
 $('cw').addEventListener('change',render);
+$('mc').addEventListener('change',render);
 render();
 </script>
 </body>
